@@ -146,12 +146,86 @@ namespace Microsoft.WindowsAzure.Storage.Table
                 // SAS via client constructor URI + Creds
                 sasCreds = new StorageCredentials(sasToken);
                 sasClient = new CloudTableClient(baseUri, sasCreds);
+                sasTable = sasClient.GetTableReference(table.Name);
                 Assert.AreEqual(1, sasTable.ExecuteQuery(new TableQuery<BaseEntity>()).Count());
 
                 // SAS via CloudTable constructor Uri + Client
                 sasCreds = new StorageCredentials(sasToken);
                 sasTable = new CloudTable(table.Uri, tableClient.Credentials);
                 sasClient = sasTable.ServiceClient;
+                Assert.AreEqual(1, sasTable.ExecuteQuery(new TableQuery<BaseEntity>()).Count());
+            }
+            finally
+            {
+                table.DeleteIfExists();
+            }
+        }
+
+        [TestMethod]
+        [Description("Test TableSas via various constructors using 2012-02-12 version token.")]
+        [TestCategory(ComponentCategory.Table)]
+        [TestCategory(TestTypeCategory.UnitTest)]
+        [TestCategory(SmokeTestCategory.NonSmoke)]
+        [TestCategory(TenantTypeCategory.DevFabric), TestCategory(TenantTypeCategory.Cloud)]
+        public void TableSASConstructorsOldVersion()
+        {
+            CloudTableClient tableClient = GenerateCloudTableClient();
+            tableClient.PayloadFormat = TablePayloadFormat.AtomPub;
+            CloudTable table = tableClient.GetTableReference("T" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                table.Create();
+
+                table.Execute(TableOperation.Insert(new BaseEntity("PK", "RK")));
+
+                // Prepare SAS authentication with full permissions
+                string sasToken = table.GetSharedAccessSignature(
+                    new SharedAccessTablePolicy
+                    {
+                        Permissions = SharedAccessTablePermissions.Add | SharedAccessTablePermissions.Delete | SharedAccessTablePermissions.Query,
+                        SharedAccessExpiryTime = DateTimeOffset.Now.AddMinutes(30)
+                    },
+                    null /* accessPolicyIdentifier */,
+                    null /* startPk */,
+                    null /* startRk */,
+                    null /* endPk */,
+                    null /* endRk */,
+                    Constants.VersionConstants.February2012);
+
+                CloudStorageAccount sasAccount;
+                StorageCredentials sasCreds;
+                CloudTableClient sasClient;
+                CloudTable sasTable;
+                Uri baseUri = new Uri(TestBase.TargetTenantConfig.TableServiceEndpoint);
+
+                // SAS via connection string parse
+                sasAccount = CloudStorageAccount.Parse(string.Format("TableEndpoint={0};SharedAccessSignature={1}", baseUri.AbsoluteUri, sasToken));
+                sasClient = sasAccount.CreateCloudTableClient();
+                sasClient.PayloadFormat = TablePayloadFormat.AtomPub;
+                sasTable = sasClient.GetTableReference(table.Name);
+
+                Assert.AreEqual(1, sasTable.ExecuteQuery(new TableQuery<BaseEntity>()).Count());
+
+                // SAS via account constructor
+                sasCreds = new StorageCredentials(sasToken);
+                sasAccount = new CloudStorageAccount(sasCreds, null, null, baseUri);
+                sasClient = sasAccount.CreateCloudTableClient();
+                sasClient.PayloadFormat = TablePayloadFormat.AtomPub;
+                sasTable = sasClient.GetTableReference(table.Name);
+                Assert.AreEqual(1, sasTable.ExecuteQuery(new TableQuery<BaseEntity>()).Count());
+
+                // SAS via client constructor URI + Creds
+                sasCreds = new StorageCredentials(sasToken);
+                sasClient = new CloudTableClient(baseUri, sasCreds);
+                sasClient.PayloadFormat = TablePayloadFormat.AtomPub;
+                sasTable = sasClient.GetTableReference(table.Name);
+                Assert.AreEqual(1, sasTable.ExecuteQuery(new TableQuery<BaseEntity>()).Count());
+
+                // SAS via CloudTable constructor Uri + Client
+                sasCreds = new StorageCredentials(sasToken);
+                sasTable = new CloudTable(table.Uri, tableClient.Credentials);
+                sasClient = sasTable.ServiceClient;
+                sasClient.PayloadFormat = TablePayloadFormat.AtomPub;
                 Assert.AreEqual(1, sasTable.ExecuteQuery(new TableQuery<BaseEntity>()).Count());
             }
             finally
@@ -1031,7 +1105,7 @@ namespace Microsoft.WindowsAzure.Storage.Table
                     Permissions = SharedAccessTablePermissions.Delete,
                 };
 
-                string sasToken = table.GetSharedAccessSignature(policy, null, null, null, null, null);
+                string sasToken = table.GetSharedAccessSignature(policy);
                 StorageCredentials creds = new StorageCredentials(sasToken);
                 CloudTable sasTable = new CloudTable(table.Uri, creds);
                 TestHelper.ExpectedException(
@@ -1048,7 +1122,7 @@ namespace Microsoft.WindowsAzure.Storage.Table
                     Permissions = SharedAccessTablePermissions.Delete | SharedAccessTablePermissions.Add,
                 };
 
-                string sasToken2 = table.GetSharedAccessSignature(policy2, null, null, null, null, null);
+                string sasToken2 = table.GetSharedAccessSignature(policy2);
                 creds.UpdateSASToken(sasToken2);
 
                 sasTable = new CloudTable(table.Uri, creds);
@@ -1091,7 +1165,7 @@ namespace Microsoft.WindowsAzure.Storage.Table
                     Permissions = SharedAccessTablePermissions.Delete,
                 };
 
-                string sasToken = table.GetSharedAccessSignature(policy, null, null, null, null, null);
+                string sasToken = table.GetSharedAccessSignature(policy);
                 StorageCredentials creds = new StorageCredentials(sasToken);
                 CloudStorageAccount sasAcc = new CloudStorageAccount(creds, new Uri(TestBase.TargetTenantConfig.BlobServiceEndpoint), new Uri(TestBase.TargetTenantConfig.QueueServiceEndpoint), new Uri(TestBase.TargetTenantConfig.TableServiceEndpoint));
                 CloudTableClient client = sasAcc.CreateCloudTableClient();
@@ -1107,6 +1181,44 @@ namespace Microsoft.WindowsAzure.Storage.Table
                 table.DeleteIfExists();
             }
         }
+
+        [TestMethod]
+        [Description("Test SAS with absolute Uri")]
+        [TestCategory(ComponentCategory.Blob)]
+        [TestCategory(TestTypeCategory.UnitTest)]
+        [TestCategory(SmokeTestCategory.NonSmoke)]
+        [TestCategory(TenantTypeCategory.DevStore), TestCategory(TenantTypeCategory.DevFabric), TestCategory(TenantTypeCategory.Cloud)]
+        public void CloudTableSASWithAbsoluteUri()
+        {
+            CloudTableClient tableClient = GenerateCloudTableClient();
+
+            CloudTable table = tableClient.GetTableReference(tableClient.BaseUri + GenerateRandomTableName());
+            try
+            {
+                table.CreateIfNotExists();
+
+                BaseEntity entity = new BaseEntity("PK", "RK");
+                table.Execute(TableOperation.Insert(entity));
+
+                SharedAccessTablePolicy policy = new SharedAccessTablePolicy()
+                {
+                    Permissions = SharedAccessTablePermissions.Delete,
+                    SharedAccessStartTime = DateTimeOffset.UtcNow.AddMinutes(-5),
+                    SharedAccessExpiryTime = DateTimeOffset.UtcNow.AddMinutes(10)
+                };
+
+                string sasToken = table.GetSharedAccessSignature(policy);
+                StorageCredentials creds = new StorageCredentials(sasToken);
+
+                CloudTable sasTable = new CloudTable(table.Uri, creds);
+                sasTable.Execute(TableOperation.Delete(entity));
+            }
+            finally
+            {
+                table.DeleteIfExists();
+            }
+        }
+
         #endregion
 
         #region Test Helpers
